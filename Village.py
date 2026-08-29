@@ -8,6 +8,12 @@ import csv
 import os
 import json
 import logging
+import re
+import shutil
+import subprocess
+import webbrowser
+import random
+import traceback
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -236,60 +242,6 @@ SQLITE_DB_NAME = 'bank_mmudzi.db'
 
 # Global database manager instance
 db_manager = None
-
-class DatabaseManager:
-    """Enhanced database manager with MySQL/SQLite support"""
-    
-    def __init__(self):
-        self.current_db_type = 'sqlite'  # Default to SQLite
-        self.mysql_available = MYSQL_AVAILABLE
-        self.connection_pool = {}
-        self.last_mysql_check = 0
-        self.connection_retry_count = 0
-        
-        # Try to connect to MySQL first
-        if self.mysql_available:
-            try:
-                self._test_mysql_connection()
-                self.current_db_type = 'mysql'
-                logger.info("Database Manager: Using MySQL as primary database")
-            except Exception as e:
-                logger.warning(f"MySQL not available, falling back to SQLite: {e}")
-                self.current_db_type = 'sqlite'
-        else:
-            logger.info("Database Manager: Using SQLite (MySQL connector not available)")
-    
-    def _test_mysql_connection(self):
-        """Test MySQL connection"""
-        if not self.mysql_available:
-            raise Exception("MySQL connector not available")
-        
-        conn = mysql.connector.connect(**MYSQL_CONFIG)
-        conn.close()
-        return True
-    
-    def get_sync_status(self):
-        """Get synchronization status"""
-        return {
-            'current_db_type': self.current_db_type,
-            'mysql_available': self.mysql_available,
-            'sqlite_available': True,
-            'last_sync': datetime.now().isoformat(),
-            'sync_pending': False
-        }
-    
-    def track_change(self, table_name, record_id, operation, data):
-        """Track changes for synchronization"""
-        # This is a placeholder for change tracking
-        logger.info(f"Change tracked: {operation} on {table_name} record {record_id}")
-        pass
-
-def initialize_database_manager():
-    """Initialize the global database manager"""
-    global db_manager
-    if db_manager is None:
-        db_manager = DatabaseManager()
-    return db_manager
 
 # Month mapping
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 
@@ -2337,13 +2289,11 @@ class MemberValidationEngine:
             
             conn.close()
             # Fallback to timestamp-based number
-            import time
             timestamp = str(int(time.time()))[-6:]
             return f"BM{year_suffix}{timestamp}"
             
         except Exception as e:
             # Fallback to simple timestamp-based number
-            import time
             current_year = datetime.now().year
             year_suffix = str(current_year)[-2:]
             timestamp = str(int(time.time()))[-6:]
@@ -4033,7 +3983,6 @@ class BackupManager:
         
         try:
             # Simple file copy for SQLite
-            import shutil
             shutil.copy2(SQLITE_DB_NAME, backup_path)
             
             # Create metadata file
@@ -4063,7 +4012,6 @@ class BackupManager:
         
         try:
             # Use mysqldump command
-            import subprocess
             
             cmd = [
                 'mysqldump',
@@ -4129,7 +4077,6 @@ class BackupManager:
     def _restore_sqlite_backup(self, backup_file: str) -> bool:
         """Restore SQLite database from backup"""
         try:
-            import shutil
             
             # Create a backup of current database before restore
             current_backup = f"{SQLITE_DB_NAME}.pre_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -4148,7 +4095,6 @@ class BackupManager:
     def _restore_mysql_backup(self, backup_file: str) -> bool:
         """Restore MySQL database from backup"""
         try:
-            import subprocess
             
             cmd = [
                 'mysql',
@@ -4944,7 +4890,6 @@ def _create_default_admin_user():
         
         if cursor.fetchone()[0] == 0:
             # Create default admin user
-            import hashlib
             default_password = "admin123"
             password_hash = hashlib.sha256(default_password.encode()).hexdigest()
             
@@ -5838,6 +5783,11 @@ def create_repayment(loan_id, repayment_amount):
     # Calculate interest portion based on current outstanding balance
     interest_amount = outstanding_balance * monthly_rate
     
+    # If repayment is less than interest due, cap interest to repayment amount
+    # so principal never goes negative
+    if interest_amount > repayment_amount:
+        interest_amount = repayment_amount
+    
     # Calculate principal portion
     principal_amount = repayment_amount - interest_amount
     
@@ -5845,10 +5795,6 @@ def create_repayment(loan_id, repayment_amount):
     if principal_amount > outstanding_balance:
         principal_amount = outstanding_balance
         interest_amount = repayment_amount - principal_amount
-    
-    # Ensure amounts are not negative
-    principal_amount = max(0, principal_amount)
-    interest_amount = max(0, interest_amount)
     
     # Insert repayment with principal and interest breakdown
     cursor.execute('''INSERT INTO Repayments 
@@ -6930,7 +6876,6 @@ class LoginWindow(tk.Tk):
         
         # Make GitHub link clickable
         def open_github(event):
-            import webbrowser
             webbrowser.open("https://github.com/Nehemiahnganjo")
         
         github_label.bind("<Button-1>", open_github)
@@ -8609,7 +8554,6 @@ class AddMemberDialog(AccessibleDialog):
         
         # Email validation (if provided)
         if data['email']:
-            import re
             email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
             if not re.match(email_pattern, data['email']):
                 errors.append("Please enter a valid email address")
@@ -9590,7 +9534,6 @@ class App(tk.Tk):
         
         # Make GitHub link clickable
         def open_github(event):
-            import webbrowser
             webbrowser.open("https://github.com/Nehemiahnganjo")
         
         dev_details.bind("<Button-1>", open_github)
@@ -9776,7 +9719,6 @@ class App(tk.Tk):
         
         # Make contact info clickable for GitHub
         def open_github(event):
-            import webbrowser
             webbrowser.open("https://github.com/Nehemiahnganjo")
         
         contact_info.bind("<Button-1>", open_github)
@@ -10306,7 +10248,7 @@ class EnhancedMemberPanel:
     # Action methods (to be implemented in subsequent tasks)
     def add_member_action(self):
         """Handle add member action"""
-        self.app.show_add_member_dialog()
+        self.show_add_member_dialog()
     
     def edit_member_action(self):
         """Handle edit member action"""
@@ -10323,7 +10265,7 @@ class EnhancedMemberPanel:
     def view_member_action(self):
         """Handle view member details action"""
         if self.selected_member_id:
-            self.app.show_member_details(self.selected_member_id)
+            self.show_member_details(self.selected_member_id)
     
     def refresh_member_list(self):
         """Refresh the member list"""
@@ -10975,24 +10917,20 @@ class EnhancedMemberPanel:
     # Placeholder methods for form operations (these would need full implementation)
     def show_add_member_dialog(self):
         """Show dialog to add a new member"""
-        dialog = AddMemberDialog(self, self)
-        self.wait_window(dialog.dialog)
+        dialog = AddMemberDialog(self.parent, self.app)
+        self.parent.wait_window(dialog.dialog)
         if dialog.result:
-            self.refresh_members_list()
+            self.refresh_member_list()
     
-    def show_member_details(self, event):
+    def show_member_details(self, member_id):
         """Show detailed member information dialog"""
-        selection = self.members_tree.selection()
-        if not selection:
+        if not member_id:
             return
         
-        item = self.members_tree.item(selection[0])
-        member_id = item['values'][0]
-        
-        dialog = MemberDetailsDialog(self, member_id, self)
-        self.wait_window(dialog.dialog)
+        dialog = MemberDetailsDialog(self.parent, member_id, self.app)
+        self.parent.wait_window(dialog.dialog)
         if dialog.result:
-            self.refresh_members_list()
+            self.refresh_member_list()
     
     def record_contribution(self):
         """Record a new contribution"""
@@ -11039,7 +10977,7 @@ class EnhancedMemberPanel:
             # Check for duplicate contribution
             current_year = datetime.now().year
             duplicate_check = ValidationEngine.check_duplicate_contribution(member_id, MONTH_TO_NUM[month], current_year)
-            if not duplicate_check['valid']:
+            if duplicate_check['is_duplicate']:
                 messagebox.showerror("Duplicate Contribution", duplicate_check['message'])
                 return
             
@@ -11833,7 +11771,7 @@ Interest-to-Principal Ratio: {(total_interest/loan_amount)*100:.1f}%
                 loan_id, 
                 member_name, 
                 format_currency(amount), 
-                f"{interest_rate*100:.1f}%", 
+                f"{interest_rate:.1f}%", 
                 monthly_payment_str,
                 total_interest_str,
                 date
@@ -11858,11 +11796,10 @@ Interest-to-Principal Ratio: {(total_interest/loan_amount)*100:.1f}%
             self.loan_amount_entry.delete(0, tk.END)
             self.loan_amount_entry.insert(0, amount_str)
             
-            # Extract interest rate
-            interest_str = values[3].replace('%', '')
-            interest_rate = float(interest_str) / 100
+            # Extract interest rate (stored and displayed as percentage, e.g. 20.0)
+            interest_str = values[3].replace('%', '').strip()
             self.interest_rate_entry.delete(0, tk.END)
-            self.interest_rate_entry.insert(0, str(interest_rate))
+            self.interest_rate_entry.insert(0, interest_str)
     
     def add_loan(self):
         try:
@@ -12498,723 +12435,3 @@ if __name__ == "__main__":
         if db_manager and db_manager.sync_manager:
             db_manager.sync_manager.stop_sync_monitoring()
 
-# Core Database Functions
-def connect_db():
-    """Connect to the appropriate database (MySQL or SQLite)"""
-    global db_manager
-    
-    if db_manager is None:
-        db_manager = initialize_database_manager()
-    
-    try:
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            return mysql.connector.connect(**MYSQL_CONFIG)
-        else:
-            conn = sqlite3.connect(SQLITE_DB_NAME, timeout=30.0)
-            conn.execute('PRAGMA foreign_keys = ON')
-            return conn
-    except Exception as e:
-        logger.error(f"Database connection error: {e}")
-        # Fallback to SQLite
-        conn = sqlite3.connect(SQLITE_DB_NAME, timeout=30.0)
-        conn.execute('PRAGMA foreign_keys = ON')
-        return conn
-
-def initialize_db():
-    """Initialize the database with proper schema"""
-    try:
-        global db_manager
-        db_manager = initialize_database_manager()
-        
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        # For SQLite, create basic schema
-        if not hasattr(db_manager, 'current_db_type') or db_manager.current_db_type != 'mysql':
-            # Create basic tables for SQLite
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Members (
-                    member_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    member_number VARCHAR(20) UNIQUE,
-                    name VARCHAR(100) NOT NULL,
-                    surname VARCHAR(100) NOT NULL,
-                    phone_number VARCHAR(20) NOT NULL,
-                    email VARCHAR(100),
-                    join_date DATE,
-                    status VARCHAR(10) DEFAULT 'active',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Contributions (
-                    contribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    member_id INTEGER NOT NULL,
-                    month INTEGER NOT NULL,
-                    year INTEGER NOT NULL,
-                    amount DECIMAL(10,2) NOT NULL,
-                    late_fee DECIMAL(10,2) DEFAULT 0.00,
-                    contribution_date DATE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (member_id) REFERENCES Members(member_id),
-                    UNIQUE(member_id, month, year)
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Loans (
-                    loan_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    member_id INTEGER NOT NULL,
-                    loan_amount DECIMAL(10,2) NOT NULL,
-                    interest_rate DECIMAL(5,2) NOT NULL,
-                    monthly_payment DECIMAL(10,2),
-                    total_interest DECIMAL(10,2),
-                    loan_date DATE NOT NULL,
-                    status VARCHAR(20) DEFAULT 'active',
-                    outstanding_balance DECIMAL(10,2) DEFAULT 0.00,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (member_id) REFERENCES Members(member_id)
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS Repayments (
-                    repayment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    loan_id INTEGER NOT NULL,
-                    repayment_amount DECIMAL(10,2) NOT NULL,
-                    principal_amount DECIMAL(10,2) NOT NULL,
-                    interest_amount DECIMAL(10,2) NOT NULL,
-                    repayment_date DATE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (loan_id) REFERENCES Loans(loan_id)
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS DividendCalculations (
-                    calculation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    member_id INTEGER NOT NULL,
-                    year INTEGER NOT NULL,
-                    total_contributions DECIMAL(10,2) NOT NULL,
-                    total_interest_paid DECIMAL(10,2) NOT NULL,
-                    outstanding_balance DECIMAL(10,2) NOT NULL,
-                    dividend_amount DECIMAL(10,2) NOT NULL,
-                    calculation_date DATE NOT NULL,
-                    status VARCHAR(20) DEFAULT 'calculated',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (member_id) REFERENCES Members(member_id),
-                    UNIQUE(member_id, year)
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS AuditLog (
-                    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    table_name VARCHAR(50) NOT NULL,
-                    operation VARCHAR(10) NOT NULL,
-                    record_id INTEGER NOT NULL,
-                    old_values TEXT,
-                    new_values TEXT,
-                    user_id VARCHAR(50) NOT NULL,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    ip_address VARCHAR(45),
-                    user_agent TEXT
-                )
-            ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info("Database initialized successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-        return False
-
-# Core CRUD Functions
-def create_member(name: str, surname: str, phone: str, email: str = '') -> int:
-    """Create a new member"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        # Generate unique member number
-        current_year = datetime.now().year
-        import random
-        member_number = f'BM-{current_year}-{random.randint(1000, 9999):04d}'
-        join_date = datetime.now().strftime('%Y-%m-%d')
-        
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('''
-                INSERT INTO Members (member_number, name, surname, phone_number, email, join_date, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ''', (member_number, name, surname, phone, email or None, join_date, 'active'))
-        else:
-            cursor.execute('''
-                INSERT INTO Members (member_number, name, surname, phone_number, email, join_date, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (member_number, name, surname, phone, email or None, join_date, 'active'))
-        
-        member_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        logger.info(f"Member created: {name} {surname} (ID: {member_id})")
-        return member_id
-    except Exception as e:
-        logger.error(f"Error creating member: {e}")
-        return None
-
-def update_member(member_id: int, name: str, surname: str, phone: str, email: str = '') -> bool:
-    """Update an existing member"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('''
-                UPDATE Members 
-                SET name = %s, surname = %s, phone_number = %s, email = %s, updated_at = NOW()
-                WHERE member_id = %s
-            ''', (name, surname, phone, email or None, member_id))
-        else:
-            cursor.execute('''
-                UPDATE Members 
-                SET name = ?, surname = ?, phone_number = ?, email = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE member_id = ?
-            ''', (name, surname, phone, email or None, member_id))
-        
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        
-        if success:
-            logger.info(f"Member updated: {name} {surname} (ID: {member_id})")
-        return success
-    except Exception as e:
-        logger.error(f"Error updating member: {e}")
-        return False
-
-def create_contribution(member_id: int, month: str, amount: float, year: int = None) -> int:
-    """Create a new contribution"""
-    try:
-        if year is None:
-            year = datetime.now().year
-        
-        # Convert month to number
-        if isinstance(month, str) and month in MONTH_TO_NUM:
-            month_num = MONTH_TO_NUM[month]
-        else:
-            month_num = int(month) if str(month).isdigit() else 1
-        
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        contribution_date = datetime.now().strftime('%Y-%m-%d')
-        
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('''
-                INSERT INTO Contributions (member_id, month, year, amount, contribution_date)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (member_id, month_num, year, amount, contribution_date))
-        else:
-            cursor.execute('''
-                INSERT INTO Contributions (member_id, month, year, amount, contribution_date)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (member_id, month_num, year, amount, contribution_date))
-        
-        contribution_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        logger.info(f"Contribution created: Member {member_id}, Amount {amount} (ID: {contribution_id})")
-        return contribution_id
-    except Exception as e:
-        logger.error(f"Error creating contribution: {e}")
-        return None
-
-def create_loan(member_id: int, loan_amount: float, interest_rate: float, months: int = 12) -> int:
-    """Create a new loan"""
-    try:
-        monthly_rate = (interest_rate / 100) / 12
-        monthly_payment = FinancialCalculator.calculate_loan_payment(loan_amount, monthly_rate, months)
-        total_interest = FinancialCalculator.calculate_total_interest(loan_amount, monthly_payment, months)
-        
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        loan_date = datetime.now().strftime('%Y-%m-%d')
-        
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('''
-                INSERT INTO Loans (member_id, loan_amount, interest_rate, monthly_payment, 
-                                 total_interest, loan_date, outstanding_balance, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (member_id, loan_amount, interest_rate, monthly_payment, 
-                  total_interest, loan_date, loan_amount, 'active'))
-        else:
-            cursor.execute('''
-                INSERT INTO Loans (member_id, loan_amount, interest_rate, monthly_payment, 
-                                 total_interest, loan_date, outstanding_balance, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (member_id, loan_amount, interest_rate, monthly_payment, 
-                  total_interest, loan_date, loan_amount, 'active'))
-        
-        loan_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        logger.info(f"Loan created: Member {member_id}, Amount {loan_amount} (ID: {loan_id})")
-        return loan_id
-    except Exception as e:
-        logger.error(f"Error creating loan: {e}")
-        return None
-
-def create_repayment(loan_id: int, repayment_amount: float) -> int:
-    """Create a loan repayment"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        # Get loan details
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('SELECT interest_rate, outstanding_balance FROM Loans WHERE loan_id = %s', (loan_id,))
-        else:
-            cursor.execute('SELECT interest_rate, outstanding_balance FROM Loans WHERE loan_id = ?', (loan_id,))
-        
-        loan_data = cursor.fetchone()
-        if not loan_data:
-            conn.close()
-            return None
-        
-        annual_rate, outstanding_balance = loan_data
-        monthly_rate = (annual_rate / 100) / 12
-        interest_amount = outstanding_balance * monthly_rate
-        principal_amount = repayment_amount - interest_amount
-        new_balance = max(0, outstanding_balance - principal_amount)
-        
-        repayment_date = datetime.now().strftime('%Y-%m-%d')
-        
-        # Insert repayment
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('''
-                INSERT INTO Repayments (loan_id, repayment_amount, principal_amount, interest_amount, repayment_date)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (loan_id, repayment_amount, principal_amount, interest_amount, repayment_date))
-        else:
-            cursor.execute('''
-                INSERT INTO Repayments (loan_id, repayment_amount, principal_amount, interest_amount, repayment_date)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (loan_id, repayment_amount, principal_amount, interest_amount, repayment_date))
-        
-        repayment_id = cursor.lastrowid
-        
-        # Update loan balance
-        loan_status = 'completed' if new_balance <= 0 else 'active'
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('UPDATE Loans SET outstanding_balance = %s, status = %s WHERE loan_id = %s', 
-                         (new_balance, loan_status, loan_id))
-        else:
-            cursor.execute('UPDATE Loans SET outstanding_balance = ?, status = ? WHERE loan_id = ?', 
-                         (new_balance, loan_status, loan_id))
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"Repayment created: Loan {loan_id}, Amount {repayment_amount} (ID: {repayment_id})")
-        return repayment_id
-    except Exception as e:
-        logger.error(f"Error creating repayment: {e}")
-        return None
-
-def read_members() -> list:
-    """Read all members"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM Members ORDER BY name, surname')
-        results = cursor.fetchall()
-        conn.close()
-        
-        members = []
-        for row in results:
-            members.append({
-                'member_id': row[0],
-                'member_number': row[1],
-                'name': row[2],
-                'surname': row[3],
-                'phone_number': row[4],
-                'email': row[5],
-                'join_date': row[6],
-                'status': row[7]
-            })
-        return members
-    except Exception as e:
-        logger.error(f"Error reading members: {e}")
-        return []
-
-def read_contributions_for_member(member_id: int) -> list:
-    """Read contributions for a member"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('SELECT * FROM Contributions WHERE member_id = %s ORDER BY year DESC, month DESC', (member_id,))
-        else:
-            cursor.execute('SELECT * FROM Contributions WHERE member_id = ? ORDER BY year DESC, month DESC', (member_id,))
-        
-        results = cursor.fetchall()
-        conn.close()
-        
-        contributions = []
-        for row in results:
-            contributions.append({
-                'contribution_id': row[0],
-                'member_id': row[1],
-                'month': row[2],
-                'year': row[3],
-                'amount': row[4],
-                'late_fee': row[5] if len(row) > 5 else 0,
-                'contribution_date': row[6] if len(row) > 6 else None
-            })
-        return contributions
-    except Exception as e:
-        logger.error(f"Error reading contributions: {e}")
-        return []
-
-def read_loans() -> list:
-    """Read all loans"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM Loans ORDER BY loan_date DESC')
-        results = cursor.fetchall()
-        conn.close()
-        
-        loans = []
-        for row in results:
-            loans.append({
-                'loan_id': row[0],
-                'member_id': row[1],
-                'loan_amount': row[2],
-                'interest_rate': row[3],
-                'monthly_payment': row[4] if len(row) > 4 else 0,
-                'total_interest': row[5] if len(row) > 5 else 0,
-                'loan_date': row[6] if len(row) > 6 else None,
-                'status': row[7] if len(row) > 7 else 'active',
-                'outstanding_balance': row[8] if len(row) > 8 else 0
-            })
-        return loans
-    except Exception as e:
-        logger.error(f"Error reading loans: {e}")
-        return []
-
-def read_repayments() -> list:
-    """Read all repayments"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM Repayments ORDER BY repayment_date DESC')
-        results = cursor.fetchall()
-        conn.close()
-        
-        repayments = []
-        for row in results:
-            repayments.append({
-                'repayment_id': row[0],
-                'loan_id': row[1],
-                'repayment_amount': row[2],
-                'principal_amount': row[3] if len(row) > 3 else 0,
-                'interest_amount': row[4] if len(row) > 4 else 0,
-                'repayment_date': row[5] if len(row) > 5 else None
-            })
-        return repayments
-    except Exception as e:
-        logger.error(f"Error reading repayments: {e}")
-        return []
-
-def get_member_profile(member_id: int) -> dict:
-    """Get member profile with contributions and loans"""
-    try:
-        conn = connect_db()
-        cursor = conn.cursor()
-        
-        if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-            cursor.execute('SELECT * FROM Members WHERE member_id = %s', (member_id,))
-        else:
-            cursor.execute('SELECT * FROM Members WHERE member_id = ?', (member_id,))
-        
-        member_data = cursor.fetchone()
-        conn.close()
-        
-        if not member_data:
-            return None
-        
-        member_info = {
-            'member_id': member_data[0],
-            'member_number': member_data[1],
-            'name': member_data[2],
-            'surname': member_data[3],
-            'phone_number': member_data[4],
-            'email': member_data[5],
-            'join_date': member_data[6],
-            'status': member_data[7]
-        }
-        
-        contributions = read_contributions_for_member(member_id)
-        loans = []  # Simplified for now
-        
-        return {
-            'member_info': member_info,
-            'contributions': contributions,
-            'loans': loans
-        }
-    except Exception as e:
-        logger.error(f"Error getting member profile: {e}")
-        return None
-
-# Validation Engine
-class ValidationEngine:
-    """Input validation engine"""
-    
-    @staticmethod
-    def validate_member_data(name: str, surname: str, phone: str, email: str = '') -> dict:
-        """Validate complete member data"""
-        errors = []
-        formatted_data = {}
-        
-        # Validate name
-        if not name or not name.strip():
-            errors.append('Name is required')
-        else:
-            formatted_data['name'] = name.strip().title()
-        
-        # Validate surname
-        if not surname or not surname.strip():
-            errors.append('Surname is required')
-        else:
-            formatted_data['surname'] = surname.strip().title()
-        
-        # Validate phone
-        if not phone or not phone.strip():
-            errors.append('Phone number is required')
-        else:
-            formatted_data['phone'] = phone.strip()
-        
-        # Validate email (optional)
-        if email and email.strip():
-            formatted_data['email'] = email.strip().lower()
-        else:
-            formatted_data['email'] = None
-        
-        return {
-            'valid': len(errors) == 0,
-            'errors': errors,
-            'message': '; '.join(errors) if errors else 'Validation passed',
-            'formatted_data': formatted_data
-        }
-    
-    @staticmethod
-    def validate_phone_number(phone: str) -> dict:
-        """Validate phone number"""
-        if not phone or not phone.strip():
-            return {'valid': False, 'message': 'Phone number is required'}
-        
-        phone = phone.strip()
-        # Basic validation - can be enhanced
-        if len(phone) >= 9:
-            return {'valid': True, 'formatted': phone, 'message': 'Valid phone number'}
-        else:
-            return {'valid': False, 'message': 'Phone number too short'}
-    
-    @staticmethod
-    def validate_financial_amount(amount_str: str) -> dict:
-        """Validate financial amount"""
-        try:
-            amount = float(str(amount_str).strip())
-            if amount <= 0:
-                return {'valid': False, 'message': 'Amount must be greater than zero'}
-            return {'valid': True, 'formatted': amount, 'message': 'Valid amount'}
-        except ValueError:
-            return {'valid': False, 'message': 'Invalid amount format'}
-
-# Note: Main App class is defined earlier in the file around line 7650
-
-# Main execution
-if __name__ == "__main__":
-    try:
-        # Initialize database
-        if initialize_db():
-            print("✅ Database initialized successfully")
-            
-            # Initialize database manager
-            db_manager = initialize_database_manager()
-            print(f"✅ Database manager initialized - Using: {db_manager.current_db_type}")
-            
-            # Start the application
-            app = App()
-            print("✅ Starting Bank Mmudzi application...")
-            app.mainloop()
-        else:
-            print("❌ Failed to initialize database")
-    except Exception as e:
-        print(f"❌ Error starting application: {e}")
-        import traceback
-        traceback.print_exc()
-
-# Missing Manager Classes for Integration Tests
-class BackupManager:
-    """Backup manager for database operations"""
-    
-    def __init__(self):
-        self.backup_dir = 'backups'
-        os.makedirs(self.backup_dir, exist_ok=True)
-    
-    def create_backup(self, backup_name: str = None) -> str:
-        """Create a database backup"""
-        try:
-            if backup_name is None:
-                backup_name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-            
-            backup_path = os.path.join(self.backup_dir, backup_name)
-            
-            # For SQLite, copy the database file
-            if not hasattr(db_manager, 'current_db_type') or db_manager.current_db_type != 'mysql':
-                import shutil
-                shutil.copy2(SQLITE_DB_NAME, backup_path)
-                logger.info(f"SQLite backup created: {backup_path}")
-                return backup_path
-            else:
-                # For MySQL, would need mysqldump - simplified for now
-                logger.info("MySQL backup would require mysqldump")
-                return backup_name
-                
-        except Exception as e:
-            logger.error(f"Error creating backup: {e}")
-            return None
-    
-    def restore_backup(self, backup_path: str) -> bool:
-        """Restore from a backup"""
-        try:
-            if os.path.exists(backup_path):
-                import shutil
-                shutil.copy2(backup_path, SQLITE_DB_NAME)
-                logger.info(f"Backup restored from: {backup_path}")
-                return True
-            else:
-                logger.error(f"Backup file not found: {backup_path}")
-                return False
-        except Exception as e:
-            logger.error(f"Error restoring backup: {e}")
-            return False
-
-class AuditManager:
-    """Audit manager for tracking system changes"""
-    
-    def __init__(self):
-        self.audit_enabled = True
-    
-    def log_action(self, table_name: str, operation: str, record_id: int, 
-                   old_values: dict = None, new_values: dict = None, user_id: str = 'system'):
-        """Log an audit action"""
-        try:
-            if not self.audit_enabled:
-                return
-            
-            conn = connect_db()
-            cursor = conn.cursor()
-            
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Truncate operation to fit database column (usually 10 chars for ENUM)
-            operation_short = operation[:10] if len(operation) > 10 else operation
-            
-            if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-                cursor.execute('''
-                    INSERT INTO AuditLog (table_name, operation, record_id, old_values, new_values, user_id, timestamp, ip_address, user_agent)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (table_name, operation_short, record_id, 
-                      json.dumps(old_values) if old_values else None,
-                      json.dumps(new_values) if new_values else None,
-                      user_id, timestamp, 'localhost', 'system'))
-            else:
-                cursor.execute('''
-                    INSERT INTO AuditLog (table_name, operation, record_id, old_values, new_values, user_id, timestamp, ip_address, user_agent)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (table_name, operation_short, record_id, 
-                      json.dumps(old_values) if old_values else None,
-                      json.dumps(new_values) if new_values else None,
-                      user_id, timestamp, 'localhost', 'system'))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Error logging audit action: {e}")
-    
-    def get_audit_trail(self, table_name: str = None, limit: int = 100) -> list:
-        """Get audit trail records"""
-        try:
-            conn = connect_db()
-            cursor = conn.cursor()
-            
-            if table_name:
-                if hasattr(db_manager, 'current_db_type') and db_manager.current_db_type == 'mysql':
-                    cursor.execute('SELECT * FROM AuditLog WHERE table_name = %s ORDER BY timestamp DESC LIMIT %s', 
-                                 (table_name, limit))
-                else:
-                    cursor.execute('SELECT * FROM AuditLog WHERE table_name = ? ORDER BY timestamp DESC LIMIT ?', 
-                                 (table_name, limit))
-            else:
-                cursor.execute(f'SELECT * FROM AuditLog ORDER BY timestamp DESC LIMIT {limit}')
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            audit_records = []
-            for row in results:
-                audit_records.append({
-                    'audit_id': row[0],
-                    'table_name': row[1],
-                    'operation': row[2],
-                    'record_id': row[3],
-                    'old_values': json.loads(row[4]) if row[4] else None,
-                    'new_values': json.loads(row[5]) if row[5] else None,
-                    'user_id': row[6],
-                    'timestamp': row[7],
-                    'ip_address': row[8] if len(row) > 8 else None,
-                    'user_agent': row[9] if len(row) > 9 else None
-                })
-            
-            return audit_records
-            
-        except Exception as e:
-            logger.error(f"Error getting audit trail: {e}")
-            return []
-
-# Fix the integration test file reference issue
-def create_bank_mmudzi_alias():
-    """Create an alias file for backward compatibility"""
-    try:
-        alias_content = '''# Alias file for backward compatibility
-from Village import *
-'''
-        with open('bank_mmudzi.py', 'w') as f:
-            f.write(alias_content)
-        logger.info("Created bank_mmudzi.py alias file")
-    except Exception as e:
-        logger.error(f"Error creating alias file: {e}")
-
-# Initialize global instances
-backup_manager = None
-audit_manager = None
-
-def initialize_managers():
-    """Initialize all manager instances"""
-    global backup_manager, audit_manager
-    
-    if backup_manager is None:
-        backup_manager = BackupManager()
-    
-    if audit_manager is None:
-        audit_manager = AuditManager()
-    
-    return backup_manager, audit_manager
-    return backup_manager, audit_manager

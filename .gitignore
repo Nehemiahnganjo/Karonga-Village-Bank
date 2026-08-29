@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Database files — never commit live data
+*.db
+*.sqlite
+*.sqlite3
+
+# Backups
+backups/
+
+# Logs
+*.log
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Exports
+*.csv
+*.xlsx
+*.pdf
+audit_log_export_*.csv
+bank_mmudzi_report_*.csv
